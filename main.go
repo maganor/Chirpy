@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync/atomic"
 )
 
@@ -47,6 +49,54 @@ func resetHits(res http.ResponseWriter, req *http.Request) {
 	res.WriteHeader(200)
 }
 
+func validate_chirp(res http.ResponseWriter, req *http.Request) {
+	type retSuccess struct {
+		CleanedBody string `json:"cleaned_body"`
+	}
+
+	type retError struct {
+		Err string `json:"error"`
+	}
+
+	type params struct {
+		Body string `json:"body"`
+	}
+
+	decoder := json.NewDecoder(req.Body)
+	parameters := params{}
+	err := decoder.Decode(&parameters)
+	res.Header().Set("Content-Type", "application/json")
+	respError := retError{}
+	if err != nil {
+		respError.Err = "Something went wrong"
+		res.WriteHeader(400)
+		dat, _ := json.Marshal(respError)
+		res.Write(dat)
+		return
+	}
+
+	if len(parameters.Body) <= 140 {
+		badWords := []string{"kerfuffle", "sharbert", "fornax"}
+		for _, word := range badWords {
+			parameters.Body = strings.ReplaceAll(parameters.Body, word, "****")
+			parameters.Body = strings.ReplaceAll(parameters.Body, strings.ToUpper(word), "****")
+			parameters.Body = strings.ReplaceAll(parameters.Body, strings.ToUpper(string(word[0]))+word[1:], "****")
+		}
+		resp := retSuccess{CleanedBody: parameters.Body}
+		res.WriteHeader(200)
+		dat, _ := json.Marshal(resp)
+		res.Write(dat)
+		return
+	} else {
+		respError.Err = "Chirp is too long"
+		res.WriteHeader(400)
+		dat, _ := json.Marshal(respError)
+		res.Write(dat)
+		return
+	}
+
+}
+
 func main() {
 	handler := http.ServeMux{}
 	server := http.Server{Handler: &handler, Addr: ":8080"}
@@ -54,5 +104,6 @@ func main() {
 	handler.HandleFunc("GET /api/healthz", health)
 	handler.HandleFunc("GET /admin/metrics", getHits)
 	handler.HandleFunc("POST /admin/reset", resetHits)
+	handler.HandleFunc("POST /api/validate_chirp", validate_chirp)
 	server.ListenAndServe()
 }
