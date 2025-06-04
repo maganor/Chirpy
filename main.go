@@ -30,10 +30,16 @@ func health(res http.ResponseWriter, req *http.Request) {
 }
 
 func getHits(res http.ResponseWriter, req *http.Request) {
-	res.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	res.Header().Set("Content-Type", "text/html")
 	res.WriteHeader(200)
 	value := apiCfg.fileserverHits.Load()
-	res.Write(fmt.Appendf(nil, "Hits: %d", value))
+	resp := fmt.Sprintf(`<html>
+  <body>
+    <h1>Welcome, Chirpy Admin</h1>
+    <p>Chirpy has been visited %d times!</p>
+  </body>
+</html>`, value)
+	res.Write([]byte(resp))
 }
 
 func resetHits(res http.ResponseWriter, req *http.Request) {
@@ -45,8 +51,8 @@ func main() {
 	handler := http.ServeMux{}
 	server := http.Server{Handler: &handler, Addr: ":8080"}
 	handler.Handle("/app/", http.StripPrefix("/app", apiCfg.middlewareMetricsInc(http.FileServer(http.Dir(".")))))
-	handler.HandleFunc("/healthz", health)
-	handler.HandleFunc("/metrics", getHits)
-	handler.HandleFunc("/reset", resetHits)
+	handler.HandleFunc("GET /api/healthz", health)
+	handler.HandleFunc("GET /admin/metrics", getHits)
+	handler.HandleFunc("POST /admin/reset", resetHits)
 	server.ListenAndServe()
 }
