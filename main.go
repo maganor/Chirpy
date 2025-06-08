@@ -1,15 +1,21 @@
 package main
 
 import (
-	"encoding/json"
+	"database/sql"
 	"fmt"
 	"net/http"
-	"strings"
+	"os"
 	"sync/atomic"
+
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
+	"github.com/maganor/Chirpy/internal/database"
 )
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
+	queries        *database.Queries
+	jwt_token      string
 }
 
 var apiCfg = apiConfig{}
@@ -45,65 +51,43 @@ func getHits(res http.ResponseWriter, req *http.Request) {
 }
 
 func resetHits(res http.ResponseWriter, req *http.Request) {
+	if os.Getenv("PLATFORM") != "dev" {
+		res.WriteHeader(403)
+		return
+	}
 	apiCfg.resetHits()
+	err := apiCfg.queries.DeleteUser(req.Context())
+	if err != nil {
+		fmt.Println(err)
+		res.WriteHeader(400)
+		res.Write([]byte("Something went wrong"))
+		return
+	}
 	res.WriteHeader(200)
 }
 
-func validate_chirp(res http.ResponseWriter, req *http.Request) {
-	type retSuccess struct {
-		CleanedBody string `json:"cleaned_body"`
-	}
-
-	type retError struct {
-		Err string `json:"error"`
-	}
-
-	type params struct {
-		Body string `json:"body"`
-	}
-
-	decoder := json.NewDecoder(req.Body)
-	parameters := params{}
-	err := decoder.Decode(&parameters)
-	res.Header().Set("Content-Type", "application/json")
-	respError := retError{}
-	if err != nil {
-		respError.Err = "Something went wrong"
-		res.WriteHeader(400)
-		dat, _ := json.Marshal(respError)
-		res.Write(dat)
-		return
-	}
-
-	if len(parameters.Body) <= 140 {
-		badWords := []string{"kerfuffle", "sharbert", "fornax"}
-		for _, word := range badWords {
-			parameters.Body = strings.ReplaceAll(parameters.Body, word, "****")
-			parameters.Body = strings.ReplaceAll(parameters.Body, strings.ToUpper(word), "****")
-			parameters.Body = strings.ReplaceAll(parameters.Body, strings.ToUpper(string(word[0]))+word[1:], "****")
-		}
-		resp := retSuccess{CleanedBody: parameters.Body}
-		res.WriteHeader(200)
-		dat, _ := json.Marshal(resp)
-		res.Write(dat)
-		return
-	} else {
-		respError.Err = "Chirp is too long"
-		res.WriteHeader(400)
-		dat, _ := json.Marshal(respError)
-		res.Write(dat)
-		return
-	}
-
-}
-
 func main() {
+	godotenv.Load()
+	dbURL := os.Getenv("DB_URL")
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	apiCfg.queries = database.New(db)
+	apiCfg.jwt_token = os.Getenv("JWT_TOKEN")
 	handler := http.ServeMux{}
 	server := http.Server{Handler: &handler, Addr: ":8080"}
 	handler.Handle("/app/", http.StripPrefix("/app", apiCfg.middlewareMetricsInc(http.FileServer(http.Dir(".")))))
 	handler.HandleFunc("GET /api/healthz", health)
 	handler.HandleFunc("GET /admin/metrics", getHits)
 	handler.HandleFunc("POST /admin/reset", resetHits)
-	handler.HandleFunc("POST /api/validate_chirp", validate_chirp)
+	handler.HandleFunc("POST /api/users", CreateUser)
+	handler.HandleFunc("POST /api/revoke", RevokeToken)
+	handler.HandleFunc("POST /api/refresh", RefreshUser)
+	handler.HandleFunc("POST /api/login", Login)
+	handler.HandleFunc("POST /api/chirps", CreateChirp)
+	handler.HandleFunc("GET /api/chirps", GetChirps)
+	handler.HandleFunc("GET /api/chirps/{id}", GetChirp)
 	server.ListenAndServe()
 }
